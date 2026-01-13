@@ -1,0 +1,722 @@
+# CareSRE Backend Implementation Prompt for Claude Sonnet 4.5
+## (Firebase Integration will be done separately by another team member)
+
+---
+
+## Project Context
+
+You are building the **complete backend logic and AI agents** for CareSRE, an AI-assisted OPD Queue Management System that has already reached Top 10 in a GDG hackathon. The **frontend UI is already complete** using Next.js + Tailwind CSS.
+
+Your task: Implement all backend API routes, AI agents, and business logic. **Firebase/Firestore integration will be handled by another team member later**, so write code that's ready to plug into Firebase.
+
+---
+
+## Tech Stack (MANDATORY - DO NOT CHANGE)
+
+- **Frontend**: Next.js 14 (App Router) + React + Tailwind CSS ✅ ALREADY DONE
+- **Backend**: Next.js API Routes (server-side)
+- **Database**: Firebase Firestore (integration pending - code for it but don't implement)
+- **AI**: Google Gemini 1.5 Flash (via Google AI Studio API)
+- **No LangChain, No CrewAI, No Python, No microservices**
+
+---
+
+## System Architecture Overview
+
+### User Roles
+1. **Patient**: Uses Patient Portal to submit symptoms → receives digital OPD slip
+2. **Admin**: Uses Admin Dashboard to view queue, alerts, and AI suggestions
+3. **Doctor**: NO dashboard (implicit - modeled via consultation time only)
+
+### Core Workflow
+```
+Patient fills form (name, age, symptoms)
+    ↓
+POST /api/patient/create
+    ↓
+Agent 1: Normalize input (no AI)
+    ↓
+Agent 2: AI Triage (Gemini) → priority + department
+    ↓
+Agent 3: Queue Prediction (deterministic) → ETA + token
+    ↓
+Agent 4: Clinical Alerts (rule-based) → flag high-risk
+    ↓
+Agent 5: Admin Suggestion (Gemini) → workflow advice
+    ↓
+[Firebase integration point - prepare data objects]
+    ↓
+Return OPD slip data to frontend
+```
+
+---
+
+## What You WILL Implement
+
+### 1. Five AI/Logic Agents (Complete Implementation)
+
+Create these as separate TypeScript modules in `/lib/agents/`
+
+#### **Agent 1: Patient Intake Agent** (`/lib/agents/intake.ts`)
+- **Type**: No AI, pure logic
+- **Input**: `{ name: string, age: string, symptoms: string }`
+- **Output**: Normalized data object
+```typescript
+{
+  name: string,        // trimmed
+  age: number,         // parsed to number
+  symptoms: string,    // trimmed, lowercased
+  timestamp: number    // Date.now()
+}
+```
+- **Validation**: Check all fields are present and valid
+- **Error handling**: Throw descriptive errors for invalid input
+
+---
+
+#### **Agent 2: Triage & Priority Agent** (`/lib/agents/triage.ts`)
+- **Type**: AI-powered (Google Gemini 1.5 Flash)
+- **Input**: `{ age: number, symptoms: string }`
+- **Output**: 
+```typescript
+{
+  priority: "LOW" | "MEDIUM" | "HIGH",
+  department: string,
+  reason: string  // one-sentence explanation
+}
+```
+
+**Gemini Prompt Template:**
+```
+You are a medical triage assistant in a government hospital OPD.
+
+Patient Details:
+- Age: {age}
+- Symptoms: {symptoms}
+
+Return ONLY valid JSON (no markdown, no explanations):
+{
+  "priority": "LOW" | "MEDIUM" | "HIGH",
+  "department": "<department name>",
+  "reason": "<one sentence explanation>"
+}
+
+Priority Guidelines:
+- HIGH: Chest pain, severe bleeding, difficulty breathing, stroke symptoms, severe trauma, severe allergic reactions
+- MEDIUM: High fever, moderate pain, elderly patients with concerns, chronic disease flare-ups, persistent vomiting
+- LOW: Minor ailments, routine checkups, mild symptoms, follow-up visits
+
+Common Departments: General Medicine, Cardiology, Orthopedics, Pediatrics, Emergency, ENT, Dermatology
+```
+
+**Implementation Requirements:**
+- Use Google Generative AI SDK: `@google/generative-ai`
+- Model: `gemini-1.5-flash`
+- Clean Gemini response (remove markdown artifacts like ```json)
+- Parse JSON safely with try-catch
+- **CRITICAL: Implement fallback logic if AI fails:**
+  ```typescript
+  // Fallback when Gemini fails
+  {
+    priority: age > 60 ? "MEDIUM" : "LOW",
+    department: "General Medicine",
+    reason: "System assigned based on age (AI temporarily unavailable)"
+  }
+  ```
+- Validate returned priority is one of: LOW, MEDIUM, HIGH
+- Add detailed logging for debugging
+
+---
+
+#### **Agent 3: Queue Prediction Agent** (`/lib/agents/queue-prediction.ts`)
+- **Type**: Deterministic logic (no AI)
+- **Input**: 
+```typescript
+{
+  department: string,
+  priority: "LOW" | "MEDIUM" | "HIGH",
+  queueData: {
+    activePatients: number,
+    avgConsultTime: number  // minutes
+  } | null
+}
+```
+- **Output**:
+```typescript
+{
+  eta: number,        // estimated wait time in minutes
+  token: string,      // e.g., "GM-042"
+  position: number    // queue position
+}
+```
+
+**Business Logic:**
+1. **Token Generation:**
+   - Format: `{DEPT_CODE}-{NUMBER}`
+   - Dept code: First 2 letters of department, uppercase
+   - Number: 3 digits, zero-padded
+   - Example: "GM-042", "CA-015", "OR-103"
+
+2. **Position Calculation (Priority Queue Logic):**
+   - HIGH priority: Skip to 20% of current queue
+   - MEDIUM priority: Skip to 60% of current queue  
+   - LOW priority: End of queue (100%)
+   - Formula: `position = Math.floor(activePatients × priorityMultiplier) + 1`
+
+3. **ETA Calculation:**
+   - Base: `position × avgConsultTime`
+   - Minimum: 5 minutes (always show at least 5)
+   - Default avgConsultTime: 15 minutes if not provided
+   - Formula: `Math.max(5, position × avgConsultTime)`
+
+**Edge Cases:**
+- If queueData is null (first patient): position = 1, ETA = 5
+- If activePatients = 0: position = 1, ETA = 5
+
+---
+
+#### **Agent 4: Clinical Alert Agent** (`/lib/agents/clinical-alert.ts`)
+- **Type**: Rule-based (safety-critical, NO AI)
+- **Input**: 
+```typescript
+{
+  priority: "LOW" | "MEDIUM" | "HIGH",
+  age: number,
+  symptoms: string
+}
+```
+- **Output**: `boolean` (true = create alert, false = no alert)
+
+**Alert Rules (evaluate in order):**
+1. **Rule 1**: Always alert if `priority === "HIGH"`
+2. **Rule 2**: Alert if elderly with concerning symptoms:
+   - Age > 65 AND
+   - Symptoms contain keywords: "chest pain", "breathing", "breath", "unconscious", "bleeding", "bleed", "fever", "dizzy", "weak", "confused", "collapse"
+3. **Rule 3**: Alert for pediatric emergencies:
+   - Age < 2 AND priority === "MEDIUM"
+
+**Return true if ANY rule matches**
+
+**Why no AI:** Medical alerts are safety-critical and must be deterministic, auditable, and never fail.
+
+---
+
+#### **Agent 5: Admin Workflow Agent** (`/lib/agents/admin-workflow.ts`)
+- **Type**: AI-lite (Google Gemini)
+- **Input**: 
+```typescript
+{
+  queueLength: number,
+  avgConsultTime: number
+}
+```
+- **Output**: `string` (one-sentence suggestion)
+
+**Gemini Prompt Template:**
+```
+You are an OPD admin assistant in a government hospital.
+
+Current Queue Status:
+- Patients waiting: {queueLength}
+- Average consultation time: {avgConsultTime} minutes
+
+Provide ONE actionable suggestion for the admin (max 15 words).
+
+Examples:
+- "Consider opening counter 2 to reduce wait time"
+- "Queue is manageable, maintain current operations"  
+- "Alert staff: high patient volume detected"
+- "Recommend extending consultation hours today"
+
+Return ONLY the suggestion text (no JSON, no markdown, no explanations).
+```
+
+**Fallback Logic:**
+```typescript
+if (queueLength > 20) {
+  return "Consider opening additional counters to manage high patient volume";
+} else if (queueLength > 10) {
+  return "Queue building up, monitor closely";
+} else {
+  return "Queue status normal, continue standard operations";
+}
+```
+
+---
+
+### 2. API Routes to Implement
+
+Create complete API routes that orchestrate the agents and **prepare data for Firebase** (but don't actually write to Firebase yet).
+
+#### **POST /app/api/patient/create/route.ts**
+
+**Request Body:**
+```typescript
+{
+  name: string,
+  age: string | number,
+  symptoms: string
+}
+```
+
+**Implementation Flow:**
+```typescript
+1. Validate input (check all fields present)
+2. Run Agent 1 (normalize data)
+3. Run Agent 2 (AI triage) with fallback
+4. Run Agent 3 (queue prediction) 
+   - For now, assume queueData = { activePatients: 5, avgConsultTime: 15 }
+   - Add TODO comment: "Fetch from Firestore /queues/{department}"
+5. Run Agent 4 (clinical alert check)
+6. Run Agent 5 (admin suggestion)
+
+// Prepare Firestore objects (don't save yet)
+const patientData = { /* normalized data + triage + token + eta */ }
+const alertData = shouldAlert ? { /* alert details */ } : null
+
+// TODO: Firebase team will implement:
+// - Save patientData to /patients collection
+// - If alertData, save to /alerts collection  
+// - Update /queues/{department} activePatients count
+
+7. Return response to frontend
+```
+
+**Response Format:**
+```typescript
+{
+  success: true,
+  slip: {
+    token: string,          // "GM-042"
+    name: string,
+    department: string,
+    priority: "LOW" | "MEDIUM" | "HIGH",
+    eta: number,            // minutes
+    position: number,
+    reason: string          // triage reason
+  },
+  adminSuggestion: string,  // optional
+  
+  // For Firebase team (not sent to frontend)
+  _firebaseData: {
+    patient: { /* full patient object */ },
+    alert: { /* alert object if needed */ } | null,
+    queueUpdate: { department: string, increment: 1 }
+  }
+}
+```
+
+**Error Handling:**
+- 400: Missing/invalid input fields
+- 503: Triage AI failed (even with fallback - rare)
+- 500: Unexpected system error
+
+---
+
+#### **GET /app/api/admin/queue/route.ts**
+
+**Purpose:** Fetch data for admin dashboard
+
+**Mock Implementation (until Firebase is ready):**
+```typescript
+// Return sample data structure that Firebase team will populate
+return {
+  patients: [
+    {
+      id: "patient_1",
+      name: "Sample Patient",
+      token: "GM-001",
+      priority: "HIGH",
+      department: "Cardiology",
+      eta: 15,
+      symptoms: "chest pain",
+      createdAt: Date.now()
+    }
+    // ... more sample patients
+  ],
+  alerts: [
+    {
+      id: "alert_1",
+      patientName: "High Risk Patient",
+      priority: "HIGH",
+      reason: "Elderly patient with severe symptoms",
+      department: "Emergency",
+      resolved: false,
+      createdAt: Date.now()
+    }
+  ],
+  queueStats: {
+    "General Medicine": { activePatients: 12, avgConsultTime: 15 },
+    "Cardiology": { activePatients: 8, avgConsultTime: 20 },
+    // ... per department
+  }
+}
+```
+
+**TODO Comment:** 
+```typescript
+// Firebase team: Query these collections:
+// - /patients: orderBy('createdAt', 'desc').limit(50)
+// - /alerts: where('resolved', '==', false)
+// - /queues: get all departments
+```
+
+---
+
+#### **GET /app/api/admin/alerts/route.ts**
+
+**Mock Response:**
+```typescript
+{
+  alerts: [
+    {
+      id: string,
+      patientId: string,
+      patientName: string,
+      priority: "HIGH",
+      reason: string,
+      department: string,
+      resolved: boolean,
+      createdAt: number
+    }
+  ]
+}
+```
+
+**TODO:** Firebase query: `/alerts` where `resolved == false`, orderBy `createdAt` desc
+
+---
+
+#### **PATCH /app/api/admin/alerts/[id]/route.ts**
+
+**Purpose:** Mark alert as resolved
+
+**Request Body:**
+```typescript
+{
+  resolved: boolean
+}
+```
+
+**Mock Response:**
+```typescript
+{
+  success: true,
+  alertId: string
+}
+```
+
+**TODO:** Firebase update: `/alerts/{id}` set `resolved = true`
+
+---
+
+### 3. Utility Functions (`/lib/utils.ts`)
+
+Implement these helper functions:
+
+```typescript
+/**
+ * Generate OPD token from department name and position
+ * @example generateToken("General Medicine", 42) → "GM-042"
+ */
+export function generateToken(department: string, position: number): string
+
+/**
+ * Calculate ETA based on position and avg consult time
+ * @example calculateETA(3, 15) → 45 (minutes)
+ */
+export function calculateETA(position: number, avgConsultTime: number): number
+
+/**
+ * Get department code (first 2 letters, uppercase)
+ * @example getDeptCode("Cardiology") → "CA"
+ */
+export function getDeptCode(department: string): string
+
+/**
+ * Validate patient input data
+ * @throws Error with specific message if invalid
+ */
+export function validatePatientInput(data: any): void
+
+/**
+ * Clean Gemini response (remove markdown artifacts)
+ */
+export function cleanGeminiResponse(text: string): string
+```
+
+---
+
+### 4. TypeScript Type Definitions (`/lib/types.ts`)
+
+Define all interfaces:
+
+```typescript
+export interface PatientInput {
+  name: string;
+  age: string | number;
+  symptoms: string;
+}
+
+export interface NormalizedPatient {
+  name: string;
+  age: number;
+  symptoms: string;
+  timestamp: number;
+}
+
+export interface TriageResult {
+  priority: "LOW" | "MEDIUM" | "HIGH";
+  department: string;
+  reason: string;
+}
+
+export interface QueuePrediction {
+  eta: number;
+  token: string;
+  position: number;
+}
+
+export interface QueueData {
+  activePatients: number;
+  avgConsultTime: number;
+}
+
+export interface OPDSlip {
+  token: string;
+  name: string;
+  department: string;
+  priority: "LOW" | "MEDIUM" | "HIGH";
+  eta: number;
+  position: number;
+  reason: string;
+}
+
+export interface Alert {
+  id?: string;
+  patientId?: string;
+  patientName: string;
+  priority: "HIGH";
+  reason: string;
+  department: string;
+  resolved: boolean;
+  createdAt: number;
+}
+
+// Add more as needed
+```
+
+---
+
+### 5. Environment Variables Setup
+
+Create `.env.local` template:
+
+```bash
+# Google Gemini API
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Firebase (will be filled by Firebase team later)
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+```
+
+---
+
+### 6. File Structure to Create
+
+```
+/app/api/
+  /patient/
+    /create/
+      route.ts              # Main patient creation endpoint ✅ IMPLEMENT
+  /admin/
+    /queue/
+      route.ts              # Queue data for dashboard ✅ IMPLEMENT (mock)
+    /alerts/
+      route.ts              # Get all alerts ✅ IMPLEMENT (mock)
+      /[id]/
+        route.ts            # Resolve specific alert ✅ IMPLEMENT (mock)
+
+/lib/
+  types.ts                  # TypeScript interfaces ✅ IMPLEMENT
+  utils.ts                  # Helper functions ✅ IMPLEMENT
+  /agents/
+    intake.ts               # Agent 1 ✅ IMPLEMENT
+    triage.ts               # Agent 2 (Gemini) ✅ IMPLEMENT
+    queue-prediction.ts     # Agent 3 ✅ IMPLEMENT
+    clinical-alert.ts       # Agent 4 ✅ IMPLEMENT
+    admin-workflow.ts       # Agent 5 (Gemini) ✅ IMPLEMENT
+  
+  firebase.ts               # ❌ SKIP (Firebase team will do this)
+
+/.env.local                 # ✅ CREATE template
+/README_FIREBASE.md         # ✅ CREATE instructions for Firebase team
+```
+
+---
+
+### 7. Testing Requirements
+
+Create test scenarios to verify (can be manual or automated):
+
+**Test Case 1: Low Priority Patient**
+```
+Input: { name: "John Doe", age: 25, symptoms: "mild headache" }
+Expected: priority = LOW, department = General Medicine, ETA ~15-30 min
+```
+
+**Test Case 2: High Priority + Alert**
+```
+Input: { name: "Jane Smith", age: 70, symptoms: "chest pain" }
+Expected: priority = HIGH, alert = true, ETA ~5-10 min
+```
+
+**Test Case 3: Medium Priority Pediatric**
+```
+Input: { name: "Baby Kumar", age: 1, symptoms: "high fever" }
+Expected: priority = MEDIUM, alert = true, department = Pediatrics
+```
+
+**Test Case 4: Gemini API Failure**
+```
+Simulate: API timeout or invalid response
+Expected: Fallback logic activates, patient still gets processed
+```
+
+---
+
+### 8. Documentation for Firebase Team
+
+Create `/README_FIREBASE.md`:
+
+```markdown
+# Firebase Integration Guide for CareSRE
+
+## Overview
+The backend logic and AI agents are complete. This document explains what the Firebase team needs to implement.
+
+## Firestore Collections Required
+
+### 1. `patients` Collection
+[Document structure here...]
+
+### 2. `queues` Collection
+[Document structure here...]
+
+### 3. `alerts` Collection
+[Document structure here...]
+
+### 4. `config` Collection
+[Document structure here...]
+
+## Integration Points
+
+### In `/app/api/patient/create/route.ts`
+Look for TODO comments marked "Firebase team"
+- Line XX: Save patient to Firestore
+- Line XX: Create alert if needed
+- Line XX: Update queue count
+
+### In `/app/api/admin/queue/route.ts`
+Replace mock data with Firestore queries:
+- Query patients collection
+- Query alerts collection
+- Query queues collection
+
+[... detailed integration instructions ...]
+```
+
+---
+
+### 9. Critical Implementation Rules
+
+✅ **DO:**
+- Write production-quality TypeScript (strict typing)
+- Add comprehensive error handling (try-catch everywhere)
+- Implement AI fallbacks (never crash if Gemini fails)
+- Add detailed console.log for debugging
+- Clean Gemini responses before JSON parsing
+- Validate all inputs
+- Add TODO comments for Firebase integration points
+- Write clear, self-documenting code
+
+❌ **DON'T:**
+- Actually connect to Firebase/Firestore
+- Implement authentication
+- Create doctor dashboard features
+- Use any database (just prepare data objects)
+- Add complex features beyond the spec
+- Use external libraries except @google/generative-ai
+
+---
+
+### 10. Success Criteria
+
+Your implementation is complete when:
+
+1. ✅ All 5 agents are implemented and working independently
+2. ✅ POST /api/patient/create runs full workflow and returns valid slip data
+3. ✅ Gemini API fallbacks work when AI fails
+4. ✅ Agent 4 correctly identifies high-risk patients
+5. ✅ Mock admin API routes return properly formatted sample data
+6. ✅ All code is typed (TypeScript strict mode passes)
+7. ✅ Clear TODO comments mark Firebase integration points
+8. ✅ README_FIREBASE.md explains exactly what Firebase team needs to do
+9. ✅ Test scenarios pass (manually verify with real Gemini API)
+
+---
+
+## Implementation Order (Recommended)
+
+1. **Setup** (15 mins)
+   - Create file structure
+   - Add types.ts
+   - Create .env.local template
+   - Install @google/generative-ai
+
+2. **Core Agents** (2 hours)
+   - Agent 1: Intake (30 min)
+   - Agent 2: Triage with Gemini (45 min)
+   - Agent 3: Queue Prediction (30 min)
+   - Agent 4: Clinical Alerts (15 min)
+   - Agent 5: Admin Workflow (30 min)
+
+3. **Utilities** (30 mins)
+   - utils.ts helper functions
+   - Test token generation, ETA calculation
+
+4. **Main API Route** (1 hour)
+   - POST /api/patient/create
+   - Wire all agents together
+   - Add error handling
+   - Test with real Gemini API
+
+5. **Admin Routes** (30 mins)
+   - Mock data for queue, alerts
+   - Add TODO comments
+
+6. **Documentation** (30 mins)
+   - README_FIREBASE.md
+   - Code comments
+   - Test case documentation
+
+**Total Estimated Time: 4-5 hours**
+
+---
+
+## Final Notes
+
+This is a **Top 10 hackathon finalist**. The code will be reviewed by judges. Prioritize:
+- **Clarity**: Judges should understand the logic easily
+- **Reliability**: Never crash during demo
+- **Explainability**: Each agent has clear, single purpose
+- **Professionalism**: Production-quality code, not prototype
+
+The Firebase team will plug in database operations, but your agent logic and API structure should be so clear that integration is trivial.
+
+**Now implement the complete backend system. Start with the agents, then wire them together in the API routes. Good luck! 🚀**
