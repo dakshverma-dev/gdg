@@ -1,31 +1,34 @@
-import { Link, useLocation } from 'react-router-dom';
+'use client';
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 function Header() {
-    const location = useLocation();
+    const pathname = usePathname();
 
     return (
         <header className="header">
             <div className="container header-content">
-                <Link to="/" className="logo">
+                <Link href="/" className="logo">
                     <div className="logo-icon">C</div>
                     <span>CareSRE</span>
                 </Link>
                 <nav className="nav-links">
                     <Link
-                        to="/"
-                        className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}
+                        href="/"
+                        className={`nav-link ${pathname === '/' ? 'active' : ''}`}
                     >
                         Home
                     </Link>
                     <Link
-                        to="/patient"
-                        className={`nav-link ${location.pathname === '/patient' ? 'active' : ''}`}
+                        href="/patient"
+                        className={`nav-link ${pathname === '/patient' ? 'active' : ''}`}
                     >
                         Patient Portal
                     </Link>
                     <Link
-                        to="/admin"
-                        className={`nav-link ${location.pathname === '/admin' ? 'active' : ''}`}
+                        href="/admin"
+                        className={`nav-link ${pathname === '/admin' ? 'active' : ''}`}
                     >
                         Admin Dashboard
                     </Link>
