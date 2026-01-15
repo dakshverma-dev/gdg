@@ -6,58 +6,59 @@ import Footer from '@/components/Footer';
 import PatientForm from '@/components/PatientForm';
 import OPDSlip from '@/components/OPDSlip';
 
-// Mock data generator for OPD slip
-const generateOPDSlip = (formData) => {
-    // Simple priority logic based on keywords in symptoms
-    const symptomLower = formData.symptoms.toLowerCase();
-    let priority = 'Low';
-    if (symptomLower.includes('chest') || symptomLower.includes('breathing') || symptomLower.includes('severe') || symptomLower.includes('emergency')) {
-        priority = 'High';
-    } else if (symptomLower.includes('pain') || symptomLower.includes('fever') || symptomLower.includes('infection')) {
-        priority = 'Medium';
-    }
-
-    // Determine department based on symptoms
-    let department = 'General Medicine';
-    if (symptomLower.includes('heart') || symptomLower.includes('chest')) {
-        department = 'Cardiology';
-    } else if (symptomLower.includes('bone') || symptomLower.includes('joint') || symptomLower.includes('fracture')) {
-        department = 'Orthopedics';
-    } else if (symptomLower.includes('skin') || symptomLower.includes('rash')) {
-        department = 'Dermatology';
-    } else if (symptomLower.includes('ear') || symptomLower.includes('throat') || symptomLower.includes('nose')) {
-        department = 'ENT';
-    }
-
-    // Generate random token
-    const tokenNumber = Math.floor(100 + Math.random() * 900);
-
-    // Calculate ETA based on priority
-    const baseWait = priority === 'High' ? 10 : priority === 'Medium' ? 25 : 45;
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + baseWait);
-    const eta = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-    return {
-        tokenNumber,
-        name: formData.name,
-        age: formData.age,
-        priority,
-        department,
-        eta
-    };
-};
-
 export default function PatientPortal() {
     const [opdSlip, setOpdSlip] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-    const handleFormSubmit = (formData) => {
-        const slip = generateOPDSlip(formData);
-        setOpdSlip(slip);
+    const handleFormSubmit = async (formData) => {
+        setIsLoading(true);
+        setError(null);
+
+        try {
+            const response = await fetch('/api/patient/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to register patient');
+            }
+
+            if (data.success && data.slip) {
+                // Map API response to OPD slip format
+                const slipData = {
+                    token: data.slip.token,
+                    tokenNumber: data.slip.token,
+                    name: data.slip.name,
+                    age: formData.age,
+                    department: data.slip.department,
+                    priority: data.slip.priority,
+                    eta: data.slip.eta,
+                    position: data.slip.position,
+                    reason: data.slip.reason,
+                    patientId: data._firebaseData?.patient?.id
+                };
+                setOpdSlip(slipData);
+            } else {
+                throw new Error('Invalid response from server');
+            }
+        } catch (err) {
+            console.error('Registration error:', err);
+            setError(err.message || 'An error occurred during registration. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleNewRegistration = () => {
         setOpdSlip(null);
+        setError(null);
     };
 
     return (
@@ -72,24 +73,31 @@ export default function PatientPortal() {
             </div>
 
             <main className="container" style={{ flex: 1, padding: 'var(--space-2xl) var(--space-lg)' }}>
-                <div style={{ maxWidth: '500px', margin: '0 auto' }}>
-                    {!opdSlip ? (
-                        <PatientForm onSubmit={handleFormSubmit} />
-                    ) : (
-                        <div>
-                            <OPDSlip data={opdSlip} />
-                            <div style={{ marginTop: 'var(--space-xl)', textAlign: 'center' }}>
-                                <p style={{ marginBottom: 'var(--space-md)', fontSize: '14px', color: 'var(--color-text-secondary)' }}>
-                                    Please save this token and arrive before your estimated time.
-                                </p>
-                                <button
-                                    onClick={handleNewRegistration}
-                                    className="btn btn-secondary"
-                                >
-                                    New Registration
-                                </button>
+                <div style={{ maxWidth: '650px', margin: '0 auto' }}>
+                    {error && (
+                        <div className="error-banner" style={{
+                            background: '#FEE2E2',
+                            border: '1px solid #FCA5A5',
+                            borderRadius: 'var(--radius-md)',
+                            padding: 'var(--space-md) var(--space-lg)',
+                            marginBottom: 'var(--space-xl)',
+                            color: '#991B1B',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-sm)'
+                        }}>
+                            <span style={{ fontSize: '20px' }}>⚠️</span>
+                            <div>
+                                <strong>Registration Failed</strong>
+                                <p style={{ margin: 0, fontSize: '14px', color: '#B91C1C' }}>{error}</p>
                             </div>
                         </div>
+                    )}
+
+                    {!opdSlip ? (
+                        <PatientForm onSubmit={handleFormSubmit} isLoading={isLoading} />
+                    ) : (
+                        <OPDSlip data={opdSlip} onNewRegistration={handleNewRegistration} />
                     )}
                 </div>
             </main>

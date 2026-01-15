@@ -2,10 +2,35 @@
 
 export type Priority = "LOW" | "MEDIUM" | "HIGH";
 
+export type VisitType = "new" | "followup";
+export type Gender = "male" | "female" | "other";
+
+export interface EmergencyContact {
+    name: string;
+    phone: string;
+}
+
 export interface PatientInput {
+    // Required fields
     name: string;
     age: string | number;
     symptoms: string;
+
+    // Enhanced fields
+    phone?: string;
+    gender?: Gender;
+    visitType?: VisitType;
+    oldPatientId?: string; // For follow-up visits
+    previousVisitDate?: string;
+
+    // Medical history
+    chronicConditions?: string;
+    currentMedications?: string;
+    allergies?: string;
+
+    // Emergency & referral
+    emergencyContact?: EmergencyContact;
+    referralDoctor?: string;
 }
 
 export interface NormalizedPatient {
@@ -13,6 +38,11 @@ export interface NormalizedPatient {
     age: number;
     symptoms: string;
     timestamp: number;
+    // Optional enhanced fields for triage
+    chronicConditions?: string;
+    currentMedications?: string;
+    allergies?: string;
+    gender?: Gender;
 }
 
 export interface TriageResult {
@@ -66,6 +96,7 @@ export interface PatientRecord {
     reason: string;
     hasAlert: boolean;
     createdAt: number;
+    status?: 'waiting' | 'in-progress' | 'completed' | 'skipped';
 }
 
 export interface QueueStats {

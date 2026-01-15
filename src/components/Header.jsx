@@ -32,6 +32,12 @@ function Header() {
                     >
                         Admin Dashboard
                     </Link>
+                    <Link
+                        href="/doctor"
+                        className={`nav-link ${pathname === '/doctor' ? 'active' : ''}`}
+                    >
+                        Doctor Portal
+                    </Link>
                 </nav>
             </div>
         </header>

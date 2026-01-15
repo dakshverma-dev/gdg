@@ -1,5 +1,9 @@
 {
-  "/page": "app/page.js",
+  "/api/admin/queue/route": "app/api/admin/queue/route.js",
+  "/api/doctor/queue/route": "app/api/doctor/queue/route.js",
+  "/api/doctor/patient/[id]/action/route": "app/api/doctor/patient/[id]/action/route.js",
   "/patient/page": "app/patient/page.js",
-  "/admin/page": "app/admin/page.js"
+  "/admin/page": "app/admin/page.js",
+  "/doctor/page": "app/doctor/page.js",
+  "/page": "app/page.js"
 }

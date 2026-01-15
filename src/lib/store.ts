@@ -37,7 +37,12 @@ const store = globalThis.__caresre_store;
 
 // Patient operations
 export function addPatient(patient: PatientRecord): void {
-    store.patients.unshift(patient); // Add to front (most recent first)
+    // Add status field if not present
+    const patientWithStatus = {
+        ...patient,
+        status: patient.status || 'waiting'
+    };
+    store.patients.unshift(patientWithStatus); // Add to front (most recent first)
 
     // Update queue stats
     const dept = patient.department;
@@ -50,6 +55,24 @@ export function addPatient(patient: PatientRecord): void {
     console.log(`[Store] Added patient ${patient.name}, total: ${store.patients.length}`);
 }
 
+export function updatePatientStatus(id: string, status: string): boolean {
+    const patient = store.patients.find(p => p.id === id);
+    if (patient) {
+        (patient as any).status = status;
+        console.log(`[Store] Updated patient ${id} status to ${status}`);
+
+        // If completed, decrement active count
+        if (status === 'completed' && store.queueStats[patient.department]) {
+            store.queueStats[patient.department].activePatients = Math.max(
+                0,
+                store.queueStats[patient.department].activePatients - 1
+            );
+        }
+        return true;
+    }
+    return false;
+}
+
 export function getPatients(): PatientRecord[] {
     return [...store.patients]; // Return copy
 }
@@ -57,6 +80,9 @@ export function getPatients(): PatientRecord[] {
 export function getPatient(id: string): PatientRecord | undefined {
     return store.patients.find(p => p.id === id);
 }
+
+// Alias for API routes
+export const getPatientById = getPatient;
 
 // Alert operations
 export function addAlert(alert: Alert): void {

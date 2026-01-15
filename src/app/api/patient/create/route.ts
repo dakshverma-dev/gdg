@@ -1,5 +1,5 @@
 // POST /api/patient/create
-// Main patient creation endpoint - orchestrates all 5 agents
+// Main patient creation endpoint - orchestrates all 6 agents
 
 import { NextRequest, NextResponse } from 'next/server';
 import { processIntake } from '@/lib/agents/intake';
@@ -7,6 +7,7 @@ import { analyzePatient } from '@/lib/agents/triage';
 import { predictQueue } from '@/lib/agents/queue-prediction';
 import { shouldCreateAlert, getAlertReason } from '@/lib/agents/clinical-alert';
 import { getAdminSuggestion } from '@/lib/agents/admin-workflow';
+import { analyzeMultipleDocuments, DocumentAnalysisResult } from '@/lib/agents/document-analysis';
 import { generateId } from '@/lib/utils';
 import { addPatient, addAlert, getQueueForDepartment } from '@/lib/store';
 import type {
@@ -17,13 +18,22 @@ import type {
     QueueData
 } from '@/lib/types';
 
+// Extended input type with documents
+interface PatientInputWithDocs extends PatientInput {
+    documents?: Array<{
+        name: string;
+        mimeType: string;
+        base64Data: string;
+    }>;
+}
+
 export async function POST(request: NextRequest) {
     console.log("\n========== NEW PATIENT CREATION REQUEST ==========");
 
     try {
         // Parse request body
-        const body = await request.json() as PatientInput;
-        console.log("[API] Received input:", body);
+        const body = await request.json() as PatientInputWithDocs;
+        console.log("[API] Received input:", { ...body, documents: body.documents?.length || 0 });
 
         // ============================================
         // Step 1: Run Agent 1 (Intake - normalize data)
@@ -41,9 +51,62 @@ export async function POST(request: NextRequest) {
         }
 
         // ============================================
-        // Step 2: Run Agent 2 (AI Triage)
+        // Step 1.5: Run Agent 6 (Document Analysis) if documents uploaded
         // ============================================
-        const triageResult = await analyzePatient(normalizedData.age, normalizedData.symptoms);
+        let documentAnalysis: DocumentAnalysisResult | null = null;
+        if (body.documents && body.documents.length > 0) {
+            console.log("[API] Analyzing", body.documents.length, "uploaded documents...");
+            documentAnalysis = await analyzeMultipleDocuments(
+                body.documents.map(doc => ({
+                    base64Data: doc.base64Data,
+                    mimeType: doc.mimeType,
+                    documentType: doc.name.toLowerCase().includes('lab') ? 'lab_report'
+                        : doc.name.toLowerCase().includes('prescription') ? 'prescription'
+                            : 'medical_record'
+                }))
+            );
+            console.log("[API] Document analysis complete:", {
+                conditionsFound: documentAnalysis.conditions.length,
+                medicationsFound: documentAnalysis.medications.length,
+                allergiesFound: documentAnalysis.allergies.length
+            });
+
+            // Merge document findings with patient-provided info
+            if (documentAnalysis.conditions.length > 0) {
+                const existingConditions = normalizedData.chronicConditions || '';
+                const docConditions = documentAnalysis.conditions.join(', ');
+                normalizedData.chronicConditions = existingConditions
+                    ? `${existingConditions}, [From Documents: ${docConditions}]`
+                    : `[From Documents: ${docConditions}]`;
+            }
+            if (documentAnalysis.medications.length > 0) {
+                const existingMeds = normalizedData.currentMedications || '';
+                const docMeds = documentAnalysis.medications.join(', ');
+                normalizedData.currentMedications = existingMeds
+                    ? `${existingMeds}, [From Documents: ${docMeds}]`
+                    : `[From Documents: ${docMeds}]`;
+            }
+            if (documentAnalysis.allergies.length > 0) {
+                const existingAllergies = normalizedData.allergies || '';
+                const docAllergies = documentAnalysis.allergies.join(', ');
+                normalizedData.allergies = existingAllergies
+                    ? `${existingAllergies}, [From Documents: ${docAllergies}]`
+                    : `[From Documents: ${docAllergies}]`;
+            }
+        }
+
+        // ============================================
+        // Step 2: Run Agent 2 (AI Triage) - now with document insights
+        // ============================================
+        const triageResult = await analyzePatient(
+            normalizedData.age,
+            normalizedData.symptoms,
+            {
+                chronicConditions: normalizedData.chronicConditions,
+                currentMedications: normalizedData.currentMedications,
+                allergies: normalizedData.allergies
+            }
+        );
         console.log("[API] Triage result:", triageResult);
 
         // ============================================
