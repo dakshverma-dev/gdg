@@ -13,7 +13,7 @@ Your task: Implement all backend API routes, AI agents, and business logic. **Fi
 
 ## Tech Stack (MANDATORY - DO NOT CHANGE)
 
-- **Frontend**: Next.js 14 (App Router) + React + Tailwind CSS ✅ ALREADY DONE
+- **Frontend**: Next.js 14 (App Router) + React + Tailwind CSS ✅ ALREADY DONE I GUESS
 - **Backend**: Next.js API Routes (server-side)
 - **Database**: Firebase Firestore (integration pending - code for it but don't implement)
 - **AI**: Google Gemini 1.5 Flash (via Google AI Studio API)

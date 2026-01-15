@@ -8,6 +8,7 @@ import { predictQueue } from '@/lib/agents/queue-prediction';
 import { shouldCreateAlert, getAlertReason } from '@/lib/agents/clinical-alert';
 import { getAdminSuggestion } from '@/lib/agents/admin-workflow';
 import { generateId } from '@/lib/utils';
+import { addPatient, addAlert, getQueueForDepartment } from '@/lib/store';
 import type {
     PatientInput,
     PatientRecord,
@@ -48,17 +49,17 @@ export async function POST(request: NextRequest) {
         // ============================================
         // Step 3: Run Agent 3 (Queue Prediction)
         // ============================================
-        // TODO: Firebase team - Fetch from Firestore /queues/{department}
-        // For now, using mock queue data
-        const mockQueueData: QueueData = {
-            activePatients: 5,
+        // Get queue data from in-memory store (will be Firebase later)
+        const storedQueueData = getQueueForDepartment(triageResult.department);
+        const queueData: QueueData = storedQueueData || {
+            activePatients: 0,
             avgConsultTime: 15
         };
 
         const queuePrediction = predictQueue(
             triageResult.department,
             triageResult.priority,
-            mockQueueData
+            queueData
         );
         console.log("[API] Queue prediction:", queuePrediction);
 
@@ -76,8 +77,8 @@ export async function POST(request: NextRequest) {
         // Step 5: Run Agent 5 (Admin Suggestion)
         // ============================================
         const adminSuggestion = await getAdminSuggestion(
-            mockQueueData.activePatients,
-            mockQueueData.avgConsultTime
+            queueData.activePatients,
+            queueData.avgConsultTime
         );
         console.log("[API] Admin suggestion:", adminSuggestion);
 
@@ -143,11 +144,13 @@ export async function POST(request: NextRequest) {
         console.log("[API] SUCCESS - Returning slip data");
         console.log("========== REQUEST COMPLETE ==========\n");
 
-        // TODO: Firebase team will implement:
-        // - Save patientRecord to /patients collection
-        // - If alertRecord exists, save to /alerts collection
-        // - Update /queues/{department} activePatients count +1
+        // Save to in-memory store (will be Firebase later)
+        addPatient(patientRecord);
+        if (alertRecord) {
+            addAlert(alertRecord);
+        }
 
+        console.log("[API] Patient saved to store");
         return NextResponse.json(response, { status: 200 });
 
     } catch (error) {

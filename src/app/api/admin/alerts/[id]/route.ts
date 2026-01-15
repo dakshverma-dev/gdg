@@ -2,6 +2,7 @@
 // Mark a specific alert as resolved
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveAlert } from '@/lib/store';
 import type { ResolveAlertResponse } from '@/lib/types';
 
 interface RouteParams {
@@ -29,10 +30,14 @@ export async function PATCH(
             );
         }
 
-        // TODO: Firebase team - Replace with Firestore update:
-        // /alerts/{id} set resolved = true, resolvedAt = Date.now()
+        // Use in-memory store (will be Firebase later)
+        const success = resolveAlert(id);
 
-        console.log(`[API] Alert ${id} marked as resolved:`, resolved);
+        if (!success) {
+            console.log(`[API] Alert ${id} not found`);
+        } else {
+            console.log(`[API] Alert ${id} marked as resolved:`, resolved);
+        }
 
         const response: ResolveAlertResponse = {
             success: true,
