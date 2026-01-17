@@ -1,0 +1,118 @@
+================================================================================
+                         CARESRE - REMAINING TASKS
+================================================================================
+
+COMPLETED ✅
+============
+- Patient Registration Form (enhanced with medical history)
+- Document Upload with AI Analysis (Gemini Vision)
+- Compact OPD Slip with QR Code
+- Doctor Portal with Queue Management
+- Smart Keyword-based Triage (fallback when AI unavailable)
+- Admin Dashboard
+- All 6 AI Agents working
+
+--------------------------------------------------------------------------------
+
+HIGH PRIORITY - TODO
+====================
+
+1. FIREBASE INTEGRATION
+   - Current: Using in-memory store (data lost on server restart)
+   - Needed: Persist patient data to Firebase Realtime Database
+   
+   Files to update:
+   - src/lib/store.ts → Replace with Firebase operations
+   - src/lib/firebase.ts → Already has config, needs CRUD functions
+   
+   Steps:
+   a) Initialize Firebase Admin SDK on server
+   b) Create collections: patients, alerts, queue_stats
+   c) Update addPatient, getPatients, updatePatientStatus to use Firebase
+   d) Test data persistence across restarts
+
+2. GEMINI API KEY
+   - Current key may be invalid/expired (getting auth errors)
+   - Get a fresh key from: https://makersuite.google.com/app/apikey
+   - Update in .env.local: GEMINI_API_KEY=your_new_key
+   - The keyword fallback works but full AI is better
+
+3. AUTHENTICATION
+   - No login system currently
+   - Needed: Separate logins for doctors/admin/reception
+   - Use Firebase Authentication
+   - Add role-based access control
+
+
+MEDIUM PRIORITY - ENHANCEMENTS
+==============================
+
+4. SMS/WhatsApp Notifications
+   - Send token and queue updates to patient's phone
+   - Integrate Twilio or similar service
+   - Notify when turn is approaching
+
+5. Real-time Queue Updates
+   - Use WebSockets or Firebase Realtime listeners
+   - Auto-update patient/doctor dashboards
+   - Show live queue position changes
+
+6. Patient History Lookup
+   - For follow-up visits, fetch previous records
+   - Show past visits, medications, diagnoses
+   - Requires Firebase patient history
+
+7. Doctor Selection
+   - Allow assigning specific doctors to patients
+   - Show doctor availability status
+   - Load balancing across doctors
+
+8. Reports & Analytics
+   - Daily patient count
+   - Average wait times
+   - Department-wise statistics
+   - Export to PDF/Excel
+
+
+LOW PRIORITY - NICE TO HAVE
+===========================
+
+9. Multi-language Support (Hindi, regional languages)
+
+10. Voice Input for symptoms (accessibility)
+
+11. Appointment Booking (for future dates)
+
+12. Medicine Prescription Module
+
+13. Lab Test Integration
+
+14. Feedback/Rating System
+
+
+DEPLOYMENT CHECKLIST
+====================
+[ ] Firebase production config
+[ ] Environment variables on hosting
+[ ] Domain setup
+[ ] SSL certificate
+[ ] Error monitoring (Sentry)
+[ ] Performance monitoring
+
+
+CURRENT TECH STACK
+==================
+- Frontend: Next.js 15.1, React 19
+- Styling: Vanilla CSS (custom design system)
+- AI: Google Gemini 1.5 Flash (triage, document analysis)
+- State: In-memory store (needs Firebase)
+- QR Code: qrcode.react
+
+
+CONTACT / NOTES
+===============
+Firebase config is in .env.local
+Gemini API key is in .env.local
+Project repo: https://github.com/dakshverma-dev/gdg
+
+================================================================================
